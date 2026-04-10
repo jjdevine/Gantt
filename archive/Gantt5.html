@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Modern Gantt — Editable JSON</title>
+<style>
+  :root{--panel-border:rgba(255,255,255,.25)}
+  body{
+    font-family:Inter,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial;
+    margin:16px;color:#fff;
+    background:linear-gradient(135deg,#007a9b 0%,#004d8b 60%,#002b55 100%);
+    background-attachment:fixed;
+  }
+  h1{font-size:18px;margin:0 0 12px;color:#fff}
+  .controls{display:flex;gap:8px;align-items:center;margin-bottom:8px;color:#fff}
+  button,select{
+    padding:8px 12px;border-radius:6px;border:1px solid #ddd;background:#f6f7f9;cursor:pointer;transition:background .2s;
+  }
+  button:hover,select:hover{background:#eef0f2}
+  #container{display:flex;gap:12px;align-items:stretch}
+  #left{flex:1;min-width:0}
+  #right{
+    width:280px;flex:0 0 280px;display:flex;flex-direction:column;gap:8px;
+  }
+  .panel{
+    border:1px solid var(--panel-border);border-radius:14px;padding:10px;
+    backdrop-filter:blur(8px);
+    background:
+      linear-gradient(180deg,rgba(255,255,255,.15) 0%,rgba(255,255,255,.05) 100%),
+      repeating-linear-gradient(45deg,rgba(255,255,255,.06) 0 1px,transparent 1px 10px);
+    box-shadow:0 4px 12px rgba(0,0,0,.4);
+  }
+  #chart{overflow:auto;margin-bottom:12px}
+	#svg{
+	  width:100%;
+	  display:block;   /* removes inline gap, prevents scrollbars from shrinking width */
+	  /* no fixed height here */
+	}
+  #toggles{max-height:640px;overflow:auto}
+  #toggles h3{margin:0 0 6px;font-size:14px;color:#fff;font-weight:800}
+  #toggles .item{display:flex;align-items:center;gap:8px;padding:4px 2px;border-bottom:1px dashed rgba(255,255,255,.12)}
+  #toggles .item:last-child{border-bottom:none}
+  #toggles label{font-size:12px;line-height:1.2;cursor:pointer;flex:1}
+  textarea{
+    width:100%;height:300px;font-family:monospace;font-size:13px;padding:8px;box-sizing:border-box;
+    border-radius:8px;border:1px solid #ccc;
+  }
+  #msg{margin-top:8px;color:#f88}
+
+  .axis text{font-size:12px;fill:#fff}
+  .axis path,.axis line{stroke:#fff}
+  .person-label{font-size:16px;font-weight:800;fill:#fff;paint-order:stroke fill;stroke:#000;stroke-width:1.5}
+  .task-label{font-size:14px;font-weight:700;fill:#fff;stroke:#111;stroke-width:1;paint-order:stroke fill}
+
+  .milestone{fill:#ffb347;stroke:#9c6300;stroke-width:1}
+  .milestone-text{font-size:12px;font-weight:700;fill:#fff;stroke:#000;stroke-width:2;paint-order:stroke fill}
+  .milestone-pin-stem{
+    stroke:#9c6300;
+    stroke-width:2;
+    stroke-linecap:round;
+  }
+
+  .gridline{stroke:rgba(255,255,255,.15)}
+  .today-line{stroke:#ff4d4f;stroke-width:1.4}
+</style>
+</head>
+<body>
+  <h1>Gantt (standalone) — editable JSON + Save</h1>
+
+  <div class="controls">
+    <label for="scale">Future window:</label>
+    <select id="scale">
+      <option value="3w">3 weeks</option>
+      <option value="3m" selected>3 months</option>
+      <option value="1y">1 year</option>
+    </select>
+    <button id="applyScale">Apply</button>
+  </div>
+
+  <div id="container">
+    <div id="left">
+      <div id="chart" class="panel">
+        <svg id="svg"></svg>
+      </div>
+      <div class="panel">
+        <textarea id="json"></textarea>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+          <button id="saveBtn">Save & Render</button>
+          <button id="resetBtn">Reset Example</button>
+          <button id="downloadBtn">Download JSON</button>
+          <div id="msg" style="flex:1"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="right">
+      <div id="toggles" class="panel">
+        <h3>Tasks shown</h3>
+        <div id="toggleList" role="group" aria-label="Toggle tasks"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script>
+  (function(){
+    const parseDate = d3.utcParse("%Y-%m-%d");
+    const formatDate = d3.utcFormat("%Y-%m-%d");
+
+    const svg = d3.select('#svg');
+    const margin = {top:36, right:24, bottom:44, left:90};
+    const barHeight=25, rowGap=5, groupGap=10, barRx=5;
+    const FADE_LEN=80, FADE_DIM=0.4, MS_RADIUS=6;
+	
+    // Milestone pin geometry
+    const PIN_HEAD_RADIUS = 6;   // round head size
+    const PIN_OVERHANG    = 22;  // how far pins can extend above first bar
+
+    const STORAGE_KEY='gantt_tasks_v1';
+    const textarea=document.getElementById('json');
+    const msg=document.getElementById('msg');
+    const toggleList = document.getElementById('toggleList');
+
+    // Palette excluding blue
+    const customPalette = ["#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf"];
+
+    // Hidden state across renders in this session
+    const hiddenKeys = new Set();
+
+    // Load saved first; fallback to example
+    const defaultExample = JSON.stringify({
+      "tasks": [
+        {"person": "bob", "task": "sales report", "start": "2025-03-01", "end": "", "milestones": {"phase 1": "2025-05-01","phase 2": "2025-07-01"}},
+        {"person": "bob", "task": "customer demo", "start": "2025-04-01", "end": "", "milestones": {"contract signing": "2025-04-25"}},
+        {"person": "fred", "task": "book event", "start": "2025-05-01", "end": "", "milestones": {"event occurs": "2025-06-24"}}
+      ]
+    }, null, 2);
+    const saved = localStorage.getItem(STORAGE_KEY);
+    textarea.value = saved ? saved : defaultExample;
+
+    document.getElementById('saveBtn').onclick=()=>{localStorage.setItem(STORAGE_KEY,textarea.value); renderFromTextarea(true);};
+    document.getElementById('resetBtn').onclick=()=>{localStorage.removeItem(STORAGE_KEY); textarea.value=defaultExample; hiddenKeys.clear(); renderFromTextarea(true);};
+    document.getElementById('downloadBtn').onclick=()=>{
+      const blob=new Blob([textarea.value],{type:'application/json'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a'); a.href=url; a.download='tasks.json'; a.click(); URL.revokeObjectURL(url);
+    };
+	
+	new ResizeObserver(() => renderFromTextarea(false))
+	  .observe(document.getElementById('chart'));
+
+    const scaleEl=document.getElementById('scale');
+    document.getElementById('applyScale').addEventListener('click',()=>renderFromTextarea(true));
+
+    function todayUTC(){const d=new Date();return new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()));}
+
+    function getViewWindow(){
+      const t0=todayUTC();
+      let futureDays;
+      switch(scaleEl.value){case'3w':futureDays=21;break;case'1y':futureDays=365;break;default:futureDays=91;}
+      const pastDays=Math.max(7,Math.round(futureDays/3));
+      return{start:d3.utcDay.offset(t0,-pastDays),end:d3.utcDay.offset(t0,futureDays)};
+    }
+
+    function keyFor(t){
+      // stable enough key for toggling during this session
+      return [t.person||'', t.task||'', t.start?formatDate(t.start):'', t.end?formatDate(t.end):''].join('||');
+    }
+
+    function renderFromTextarea(rebuildToggles){
+      msg.textContent='';
+      let data;
+      try{ data = JSON.parse(textarea.value); }
+      catch(e){ msg.textContent='Invalid JSON'; return; }
+      if(!data.tasks||!Array.isArray(data.tasks)){ msg.textContent='Missing tasks array'; return; }
+      renderChart(data.tasks, rebuildToggles);
+    }
+
+    renderFromTextarea(true);
+
+    function renderChart(tasksRaw, rebuildTogglePanel){
+      // Normalize
+      const tasks=tasksRaw.map((t,i)=>({
+        id:i,
+        person:t.person||'—',
+        task:t.task||('task '+(i+1)),
+        start:t.start?parseDate(t.start):null,
+        end:(t.end&&t.end.trim())?parseDate(t.end):null,
+        milestones:t.milestones||{}
+      })).filter(d=>d.start);
+
+      const {start:viewStart,end:viewEnd}=getViewWindow();
+      tasks.forEach(d=>{ if(!d.end||isNaN(+d.end)) d.end=viewEnd; });
+
+      const overlaps = (t) => (t.start <= viewEnd) && (t.end >= viewStart);
+
+      // People and colors
+      const people=[...new Set(tasks.map(d=>d.person))];
+      const colors=d3.scaleOrdinal().domain(people).range(customPalette);
+
+      // Visible tasks by person, excluding hidden
+      const byPersonVisible = new Map();
+      const visibleTaskList = []; // flat list for toggles
+      people.forEach(p=>{
+        const vis = tasks.filter(t=>{
+          if(t.person!==p) return false;
+          if(!overlaps(t)) return false;
+          const k = keyFor(t);
+          if(hiddenKeys.has(k)) return false;
+          return true;
+        });
+        const visAll = tasks.filter(t=>t.person===p && overlaps(t)); // includes hidden for toggles
+        visAll.forEach(t=>visibleTaskList.push(t));
+        if (vis.length) byPersonVisible.set(p, vis);
+      });
+
+      // Optionally rebuild the toggle panel to reflect current window
+      if (rebuildTogglePanel) buildToggles(visibleTaskList);
+
+      const visiblePeople = Array.from(byPersonVisible.keys());
+
+      const width=Math.max(800,document.getElementById('chart').clientWidth-24);
+      if (visiblePeople.length === 0) {
+        svg.attr('viewBox',`0 0 ${width} 140`).attr('preserveAspectRatio','xMidYMid meet');
+        svg.selectAll('*').remove();
+        svg.append('text')
+          .attr('x', 12).attr('y', 28)
+          .attr('fill', '#fff').attr('font-size', 14)
+          .text('No tasks in the selected date range (or all hidden).');
+        return;
+      }
+
+      // Height based on visible rows
+      const groupsHeight = visiblePeople.reduce((s,p)=>{
+        const n = byPersonVisible.get(p).length;
+        return s + (n * (barHeight + rowGap)) + groupGap;
+      }, 0);
+
+      const height=margin.top+margin.bottom+groupsHeight;
+
+		svg
+		  .attr('viewBox', `0 0 ${width} ${height}`)
+		  .attr('preserveAspectRatio', 'none')   // fill width even when very tall
+		  .attr('width', '100%')
+		  .attr('height', height);
+      svg.selectAll('*').remove();
+
+      const x=d3.scaleUtc().domain([viewStart,viewEnd]).range([margin.left,width-margin.right]);
+      const plotX0=margin.left, plotX1=width-margin.right;
+      const defs=svg.append('defs');
+
+      // Clip, expanded up for milestone diamonds
+      defs.append('clipPath').attr('id','plot-clip')
+        .append('rect')
+          .attr('x',plotX0)
+          .attr('y',margin.top - PIN_OVERHANG)
+          .attr('width',plotX1-plotX0)
+          .attr('height',height-margin.bottom-margin.top + PIN_OVERHANG);
+		  
+
+      // Axis tick interval + formatter (this was missing)
+      const tickInterval = d3.utcDay.every(7);
+      const xAxis = d3.axisBottom(x)
+        .ticks(tickInterval)
+        .tickFormat(d3.utcFormat('%b %d'));
+
+      // Grid
+      svg.append('g').selectAll('line').data(x.ticks(tickInterval)).enter().append('line')
+        .attr('x1',d=>x(d)).attr('x2',d=>x(d))
+        .attr('y1',margin.top-6).attr('y2',height-margin.bottom+6).attr('class','gridline');
+
+      // Vertical positions
+      const groupTop=new Map(); let cy=margin.top;
+      visiblePeople.forEach(p=>{
+        groupTop.set(p,cy);
+        const rows = byPersonVisible.get(p).length;
+        cy += rows*(barHeight+rowGap) + groupGap;
+      });
+
+      // Person labels
+      visiblePeople.forEach(p=>{
+        const rows = byPersonVisible.get(p).length;
+        const gH = rows*(barHeight+rowGap);
+        svg.append('text')
+          .attr('class','person-label')
+          .attr('x',12)
+          .attr('y',groupTop.get(p)+gH/2+5)
+          .text(p);
+      });
+
+      const taskG=svg.append('g').attr('clip-path','url(#plot-clip)');
+
+      function appendBarGradient(id,color,w,lfade,rfade){
+        const lf=Math.min(0.5,lfade/w||0),rf=Math.min(0.5,rfade/w||0);
+        const g=defs.append('linearGradient').attr('id',id).attr('x1','0%').attr('x2','100%');
+        const dim=FADE_DIM;
+        if(lf>0){g.append('stop').attr('offset','0%').attr('stop-color',color).attr('stop-opacity',dim);
+          g.append('stop').attr('offset',lf*100+'%').attr('stop-color',color).attr('stop-opacity',1);}
+        else g.append('stop').attr('offset','0%').attr('stop-color',color).attr('stop-opacity',1);
+        if(rf>0){g.append('stop').attr('offset',(100-rf*100)+'%').attr('stop-color',color).attr('stop-opacity',1);
+          g.append('stop').attr('offset','100%').attr('stop-color',color).attr('stop-opacity',dim);}
+        else g.append('stop').attr('offset','100%').attr('stop-color',color).attr('stop-opacity',1);
+      }
+
+      // Render visible tasks
+      visiblePeople.forEach(p=>{
+        const list=byPersonVisible.get(p);
+        const color=colors(p);
+
+        list.forEach((t,i)=>{
+          const yTop=groupTop.get(p)+i*(barHeight+rowGap);
+          const startPx=x(t.start), endPx=x(t.end);
+          const dStart=Math.max(plotX0,Math.max(startPx,plotX0));
+          const dEnd=Math.min(plotX1,Math.min(endPx,plotX1));
+          const w=Math.max(0,dEnd-dStart); if(w<=0) return;
+
+          const truncL=t.start<viewStart||startPx<plotX0, truncR=t.end>viewEnd||endPx>plotX1;
+          const lf=truncL?Math.min(FADE_LEN,w/2):0, rf=truncR?Math.min(FADE_LEN,w/2):0;
+
+          const gradId=`g${t.id}_${i}`; appendBarGradient(gradId,color,w,lf,rf);
+
+          // bar
+          taskG.append('rect')
+            .attr('x',dStart).attr('y',yTop)
+            .attr('width',w).attr('height',barHeight)
+            .attr('rx',barRx)
+            .attr('fill',`url(#${gradId})`)
+            .attr('stroke',d3.color(color).darker(0.8)).attr('stroke-width',1);
+
+          // label
+          taskG.append('text')
+            .attr('x',dStart+8)
+            .attr('y',yTop+Math.round(barHeight*0.68))
+            .attr('class','task-label')
+            .attr('text-anchor','start')
+            .text(t.task);
+
+          // milestones: map-pin style, tip stuck into top of the task bar
+          const milestonesArr = Object.entries(t.milestones||{})
+            .map(([k,v])=>({label:k, date: parseDate(v)}))
+            .filter(m => m.date && m.date>=viewStart && m.date<=viewEnd);
+
+          milestonesArr.forEach(m=>{
+            const mx = x(m.date);
+            if (mx < plotX0 || mx > plotX1) return;
+
+            const barTopY    = yTop;
+            const barCenterY = yTop + barHeight / 2;
+
+            // centre of the pin head sits on the bar top
+            const headCy = barTopY;
+
+            // stem starts just below the head and ends at the bar centre
+            const stemY1 = headCy + PIN_HEAD_RADIUS * 0.2;
+            const stemY2 = barCenterY;
+
+            // pin head (circle)
+            taskG.append('circle')
+              .attr('cx', mx)
+              .attr('cy', headCy)
+              .attr('r', PIN_HEAD_RADIUS)
+              .attr('class','milestone');
+
+            // pin stem (down to bar centre)
+            taskG.append('line')
+              .attr('x1', mx)
+              .attr('y1', stemY1)
+              .attr('x2', mx)
+              .attr('y2', stemY2)
+              .attr('class','milestone-pin-stem');
+
+            // label: horizontally offset, text centre aligned with TOP of bar
+            taskG.append('text')
+              .attr('x', mx + 10)
+              .attr('y', barTopY)                 // top of bar
+              .attr('dominant-baseline', 'middle')// text centre on that line
+              .attr('class','milestone-text')
+              .attr('text-anchor','start')
+              .text(m.label);
+          });
+        });
+      });
+
+      // Axis
+      svg.append('g')
+        .attr('transform',`translate(0,${height-margin.bottom+6})`)
+        .attr('class','axis')
+        .call(xAxis)
+        .selectAll('text')
+        .attr('transform','rotate(-35)')
+        .style('text-anchor','end');
+
+      // Today line
+      const t0=todayUTC();
+      if(t0>=viewStart&&t0<=viewEnd)
+        svg.append('line')
+          .attr('x1',x(t0)).attr('x2',x(t0))
+          .attr('y1',margin.top-6).attr('y2',height-margin.bottom+6)
+          .attr('class','today-line');
+    }
+
+    function buildToggles(visibleTaskList){
+      // De-dup by key, keep stable order by person then start then task
+      const seen = new Set();
+      const deduped = visibleTaskList
+        .slice()
+        .sort((a,b)=>{
+          if (a.person!==b.person) return a.person.localeCompare(b.person);
+          const as=a.start?+a.start:0, bs=b.start?+b.start:0;
+          if (as!==bs) return as-bs;
+          return (a.task||'').localeCompare(b.task||'');
+        })
+        .filter(t=>{
+          const k=keyFor(t);
+          if(seen.has(k)) return false;
+          seen.add(k); return true;
+        });
+
+      toggleList.innerHTML='';
+      deduped.forEach(t=>{
+        const k = keyFor(t);
+        const id = 'chk_' + btoa(k).replace(/=/g,'');
+        const row = document.createElement('div');
+        row.className = 'item';
+        const cb = document.createElement('input');
+        cb.type='checkbox'; cb.id=id; cb.checked = !hiddenKeys.has(k);
+        cb.addEventListener('change',()=>{
+          if(cb.checked) hiddenKeys.delete(k); else hiddenKeys.add(k);
+          // Re-render chart only; do not rebuild the toggles to preserve scroll and selection
+          renderFromTextarea(false);
+        });
+        const label = document.createElement('label');
+        label.setAttribute('for', id);
+        label.textContent = `${t.person} — ${t.task}`;
+        row.appendChild(cb); row.appendChild(label);
+        toggleList.appendChild(row);
+      });
+    }
+  })();
+  </script>
+</body>
+</html>

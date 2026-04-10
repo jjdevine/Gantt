@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Simple Gantt — Editable JSON</title>
+  <style>
+    body { font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; margin: 16px; color:#111 }
+    h1 { font-size:18px; margin:0 0 12px }
+    #chart { border:1px solid #e6e6e6; padding:8px; overflow:auto; margin-bottom:12px }
+    .controls { display:flex; gap:8px; align-items:center; margin-bottom:8px }
+    button, select { padding:8px 12px; border-radius:6px; border:1px solid #ccc; background:#f6f7f9 }
+    #editor { display:block; }
+    #left { max-width:1000px }
+    textarea { width:100%; height:420px; font-family: monospace; font-size:13px; padding:8px; box-sizing:border-box }
+    #msg { margin-top:8px; color:#b33 }
+
+    /* Axis and labels */
+    .axis text { font-size:12px }
+    .person-label { font-size:13px; fill:#222; font-weight:600 }
+
+    /* Task label: left aligned, larger, readable on any bar */
+    .task-label {
+      font-size:14px;
+      font-weight:700;
+      fill:#fff;
+      stroke:#111;           /* thin outline for contrast */
+      stroke-width:1;
+      paint-order:stroke fill;
+    }
+
+    /* Milestones: diamond + text */
+    .milestone { fill:#ff4d4f; stroke:#8a1b1d; stroke-width:1 }
+    .milestone-text {
+      font-size:12px;
+      font-weight:700;
+      fill:#222;
+      paint-order:stroke fill;
+      stroke:#fff;           /* subtle halo to lift off background */
+      stroke-width:2;
+    }
+
+    .gridline { stroke:#eee }
+    .today-line { stroke:#ff7a7a; stroke-width:1.2 }
+  </style>
+</head>
+<body>
+  <h1>Gantt (standalone) — editable JSON + Save</h1>
+
+  <!-- Top: scale controls + chart -->
+  <div class="controls">
+    <label for="scale">Future window:</label>
+    <select id="scale" aria-label="Future window">
+      <option value="3w">3 weeks</option>
+      <option value="3m" selected>3 months</option>
+      <option value="1y">1 year</option>
+    </select>
+    <button id="applyScale">Apply</button>
+    <span style="font-size:12px;color:#666">Past window auto-set to 1/3 of future</span>
+  </div>
+
+  <div id="chart">
+    <svg id="svg" width="100%" height="640"></svg>
+  </div>
+
+  <!-- Bottom: editor + actions -->
+  <div id="editor">
+    <div id="left">
+      <p style="margin:4px 0 8px">Edit tasks JSON below then click <strong>Save & Render</strong>. JSON must be an object with a top-level <code>tasks</code> array (example provided).</p>
+      <textarea id="json">{
+  "tasks": [
+    {
+      "person": "bob",
+      "task": "sales report",
+      "start": "2025-03-01",
+      "end": "",
+      "milestones": {
+        "phase 1": "2025-05-01",
+        "phase 2": "2025-07-01"
+      }
+    },
+    {
+      "person": "bob",
+      "task": "customer demo",
+      "start": "2025-04-01",
+      "end": "",
+      "milestones": {
+        "contract signing": "2025-04-25"
+      }
+    },
+    {
+      "person": "fred",
+      "task": "book event",
+      "start": "2025-05-01",
+      "end": "",
+      "milestones": {
+        "event occurs": "2025-06-24"
+      }
+    }
+  ]
+}</textarea>
+      <div style="margin-top:8px">
+        <button id="saveBtn">Save & Render</button>
+        <button id="resetBtn">Reset Example</button>
+        <button id="downloadBtn">Download JSON</button>
+      </div>
+      <div id="msg"></div>
+      <p style="margin-top:14px; font-size:13px; color:#555">
+        Notes: daily granularity with weekly gridlines. Window = past ⅓ of selected future range.
+        Tasks with empty <code>end</code> extend to the right edge of the view; their colour fades toward the view end.
+        Data is saved to <code>localStorage</code>.
+      </p>
+    </div>
+  </div>
+
+  <!-- D3 v7 -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script>
+  (function(){
+    const parseDate = d3.utcParse("%Y-%m-%d");
+    const formatDate = d3.utcFormat("%Y-%m-%d");
+    const svg = d3.select('#svg');
+
+    // Layout constants
+    const margin = {top: 36, right: 24, bottom: 44, left: 170};
+    const barHeight = 27;             // 1.5x original 18
+    const rowGap = 10;                // gap between bars within a person
+    const groupGap = 18;              // gap between people groups
+    const barRx = 5;
+
+    function todayUTC() {
+      const d = new Date();
+      return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+    }
+
+    // Scale control: future window and derived past window (1/3 of future)
+    const scaleEl = document.getElementById('scale');
+    document.getElementById('applyScale').addEventListener('click', renderFromTextarea);
+
+    function getViewWindow() {
+      const t0 = todayUTC();
+      let futureDays;
+      switch (scaleEl.value) {
+        case '3w': futureDays = 21; break;
+        case '1y': futureDays = 365; break;
+        case '3m':
+        default:   futureDays = 91; break;
+      }
+      const pastDays = Math.max(7, Math.round(futureDays / 3));
+      const start = d3.utcDay.offset(t0, -pastDays);
+      const end   = d3.utcDay.offset(t0,  futureDays);
+      return {start, end};
+    }
+
+    const STORAGE_KEY = 'gantt_tasks_v1';
+    const textarea = document.getElementById('json');
+    const msg = document.getElementById('msg');
+
+    function loadSaved() {
+      const s = localStorage.getItem(STORAGE_KEY);
+      if (s) textarea.value = s;
+    }
+    loadSaved();
+
+    document.getElementById('saveBtn').addEventListener('click', () => {
+      localStorage.setItem(STORAGE_KEY, textarea.value);
+      renderFromTextarea();
+    });
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      localStorage.removeItem(STORAGE_KEY);
+      location.reload();
+    });
+    document.getElementById('downloadBtn').addEventListener('click', () => {
+      const blob = new Blob([textarea.value], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'tasks.json'; a.click(); URL.revokeObjectURL(url);
+    });
+
+    function renderFromTextarea(){
+      msg.textContent = '';
+      let data;
+      try { data = JSON.parse(textarea.value); }
+      catch(e){ msg.textContent = 'Invalid JSON: ' + e.message; return; }
+      if (!data.tasks || !Array.isArray(data.tasks)) { msg.textContent = 'JSON must contain a top-level "tasks" array.'; return; }
+      renderChart(data.tasks);
+    }
+
+    renderFromTextarea();
+
+    function renderChart(tasksRaw) {
+      const tasks = tasksRaw.map((t, i) => ({
+        id: i,
+        person: t.person || '—',
+        task: t.task || ('task ' + (i+1)),
+        start: t.start ? parseDate(t.start) : null,
+        end: (t.end !== undefined && String(t.end).trim() !== '') ? parseDate(t.end) : null,
+        milestones: t.milestones || {}
+      }));
+
+      const people = Array.from(new Set(tasks.map(d=>d.person)));
+      const colors = d3.scaleOrdinal().domain(people).range(d3.schemeCategory10);
+
+      const view = getViewWindow();
+      const viewStart = view.start, viewEnd = view.end;
+
+      const filtered = tasks.filter(d => d.start);
+      filtered.forEach(d => {
+        if (!d.end || isNaN(+d.end)) d.end = viewEnd; // open-ended flows to view end
+        d.milestonesArr = Object.entries(d.milestones || {})
+          .map(([k,v]) => ({label:k, date: parseDate(v)}))
+          .filter(x => x.date && !isNaN(+x.date));
+      });
+
+      // Build per-person groups
+      const tasksByPerson = {};
+      people.forEach(p => tasksByPerson[p] = filtered.filter(t => t.person === p));
+
+      // Compute dynamic height
+      const groupsHeight = people.reduce((sum, p) => {
+        const n = Math.max(1, tasksByPerson[p].length);
+        return sum + (n * (barHeight + rowGap)) + groupGap;
+      }, 0);
+      const width = Math.max(800, document.getElementById('chart').clientWidth - 24);
+      const height = margin.top + margin.bottom + groupsHeight;
+
+      svg.attr('viewBox', `0 0 ${width} ${height}`).attr('preserveAspectRatio', 'xMidYMid meet');
+      svg.selectAll('*').remove();
+
+      const x = d3.scaleUtc().domain([viewStart, viewEnd]).range([margin.left, width - margin.right]);
+
+      // Y positioning by accumulating group offsets
+      const groupTop = new Map();
+      let cursorY = margin.top;
+      people.forEach(p => {
+        groupTop.set(p, cursorY);
+        const rows = Math.max(1, tasksByPerson[p].length);
+        cursorY += rows * (barHeight + rowGap) + groupGap;
+      });
+
+      // Axis ticks weekly
+      const tickInterval = d3.utcDay.every(7);
+      const xAxis = d3.axisBottom(x).ticks(tickInterval).tickFormat(d3.utcFormat('%b %d'));
+
+      // Gridlines
+      svg.append('g').selectAll('line')
+        .data(x.ticks(tickInterval))
+        .enter().append('line')
+        .attr('x1', d => x(d)).attr('x2', d => x(d))
+        .attr('y1', margin.top - 6).attr('y2', height - margin.bottom + 6)
+        .attr('class','gridline');
+
+      // Person labels at group midlines
+      people.forEach(p => {
+        const rows = Math.max(1, tasksByPerson[p].length);
+        const groupHeight = rows * (barHeight + rowGap);
+        const yMid = groupTop.get(p) + groupHeight/2;
+        svg.append('text')
+          .attr('class','person-label')
+          .attr('x', 12)
+          .attr('y', yMid + 4)
+          .text(p);
+      });
+
+      const taskG = svg.append('g').attr('class','tasks');
+
+      // One gradient per person for open-ended fade
+      const defs = svg.append('defs');
+
+      people.forEach(person => {
+        const list = tasksByPerson[person];
+        const color = colors(person);
+
+        const gradId = `grad-${person.replace(/\W/g,'')}`;
+        const grad = defs.append('linearGradient').attr('id', gradId)
+          .attr('x1','0%').attr('x2','100%').attr('y1','0%').attr('y2','0%');
+        grad.append('stop').attr('offset','0%').attr('stop-color', color).attr('stop-opacity',1);
+        grad.append('stop').attr('offset','100%').attr('stop-color', color).attr('stop-opacity',0.25);
+
+        list.forEach((t, idx) => {
+          const yTop = groupTop.get(person) + idx * (barHeight + rowGap);
+          const barStart = x(t.start);
+          const barEnd = x(t.end);
+          const widthPx = Math.max(6, barEnd - barStart);
+
+          // Bar with border
+          taskG.append('rect')
+            .attr('x', barStart)
+            .attr('y', yTop)
+            .attr('width', widthPx)
+            .attr('height', barHeight)
+            .attr('rx', barRx).attr('ry', barRx)
+            .attr('fill', `url(#${gradId})`)
+            .attr('stroke', d3.color(color).darker(0.8))
+            .attr('stroke-width', 1);
+
+          // Left-aligned task name inside bar
+          taskG.append('text')
+            .attr('x', barStart + 8)
+            .attr('y', yTop + Math.round(barHeight*0.68))
+            .attr('class','task-label')
+            .attr('text-anchor','start')
+            .text(t.task);
+
+          // Milestones: diamond + label above
+          t.milestonesArr.forEach(m => {
+            if (m.date < viewStart || m.date > viewEnd) return;
+            const mx = x(m.date);
+            const my = yTop + barHeight/2;
+
+            // diamond (rotated square)
+            const r = 6;
+            const points = [
+              [mx, my - r],
+              [mx + r, my],
+              [mx, my + r],
+              [mx - r, my]
+            ].map(p => p.join(',')).join(' ');
+            taskG.append('polygon')
+              .attr('points', points)
+              .attr('class','milestone');
+
+            // label
+            taskG.append('text')
+              .attr('x', mx + 8)
+              .attr('y', yTop - 4)
+              .attr('class','milestone-text')
+              .attr('text-anchor','start')
+              .text(m.label);
+          });
+        });
+      });
+
+      // Axis
+      svg.append('g')
+        .attr('transform', `translate(0, ${height - margin.bottom + 6})`)
+        .call(xAxis)
+        .selectAll('text')
+        .attr('transform','rotate(-35)')
+        .style('text-anchor','end');
+
+      // Today line
+      const t0 = todayUTC();
+      if (t0 >= viewStart && t0 <= viewEnd) {
+        svg.append('line')
+          .attr('x1', x(t0)).attr('x2', x(t0))
+          .attr('y1', margin.top - 6).attr('y2', height - margin.bottom + 6)
+          .attr('class','today-line');
+      }
+    }
+  })();
+  </script>
+</body>
+</html>
