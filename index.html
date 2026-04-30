@@ -284,6 +284,10 @@
           <input type="checkbox" id="hideCompleted" checked />
           <label for="hideCompleted">Hide completed</label>
         </div>
+        <div class="item">
+          <input type="checkbox" id="hideOverdue" />
+          <label for="hideOverdue">Hide overdue</label>
+        </div>
       </div>
 
       <!-- milestones visibility panel -->
@@ -420,6 +424,7 @@
     const capacityImpactState = { high: true, medium: true, low: true };
     let showMilestones = true;
     let hideCompleted = true;
+    let hideOverdue = false;
 
     function normaliseImpact(val){
       if(!val) return 'medium';
@@ -476,6 +481,16 @@
       hideCompletedCheckbox.checked = hideCompleted;
       hideCompletedCheckbox.addEventListener('change', () => {
         hideCompleted = hideCompletedCheckbox.checked;
+        renderFromTextarea(false);
+      });
+    }
+
+    // hide overdue checkbox
+    const hideOverdueCheckbox = document.getElementById('hideOverdue');
+    if(hideOverdueCheckbox){
+      hideOverdueCheckbox.checked = hideOverdue;
+      hideOverdueCheckbox.addEventListener('change', () => {
+        hideOverdue = hideOverdueCheckbox.checked;
         renderFromTextarea(false);
       });
     }
@@ -690,6 +705,7 @@
           if(!overlaps(t)) return false;
           if(!isImpactVisible(t.capacityImpact)) return false;
           if(hideCompleted && t.complete) return false;
+          if(hideOverdue && t.overdue) return false;
           const k = keyFor(t);
           if(hiddenKeys.has(k)) return false;
           return true;
