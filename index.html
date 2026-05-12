@@ -177,6 +177,14 @@
     gap:8px;
     margin-top:8px;
   }
+  .btn-danger{
+    background:#d32f2f;
+    border-color:#b71c1c;
+    color:#fff;
+  }
+  .btn-danger:hover{
+    background:#b71c1c;
+  }
   .modal-note{
     font-size:11px;
     color:#ddd;
@@ -354,6 +362,9 @@
 
         <div id="quickError"></div>
         <div class="modal-actions">
+          <div class="modal-actions-left">
+            <button type="button" id="quickDelete" class="btn-danger" hidden>Delete</button>
+          </div>
           <button type="button" id="quickCancel">Cancel</button>
           <button type="submit" id="quickSubmit">Add</button>
         </div>
@@ -1003,6 +1014,7 @@
     const quickAddBtn = document.getElementById('quickAddBtn');
     const quickModalTitle = document.getElementById('quickModalTitle');
     const quickSubmit = document.getElementById('quickSubmit');
+    const quickDelete = document.getElementById('quickDelete');
 
     const qmPerson = document.getElementById('qmPerson');
     const qmTask = document.getElementById('qmTask');
@@ -1086,6 +1098,7 @@
       quickError.textContent = '';
       quickModalTitle.textContent = 'Quick add task';
       quickSubmit.textContent = 'Add';
+      quickDelete.hidden = true;
 
       const d = new Date();
       const yyyy = d.getFullYear();
@@ -1115,6 +1128,7 @@
       quickError.textContent = '';
       quickModalTitle.textContent = 'Edit task';
       quickSubmit.textContent = 'Update';
+      quickDelete.hidden = false;
 
       const t = currentData.tasks[idx];
 
@@ -1151,6 +1165,37 @@
 
     quickAddBtn.addEventListener('click', openQuickModalForAdd);
     quickCancel.addEventListener('click', closeQuickModal);
+    quickDelete.addEventListener('click', () => {
+      quickError.textContent = '';
+
+      if(!currentData){
+        try{
+          currentData = textarea.value ? JSON.parse(textarea.value) : {tasks:[]};
+        }catch(err){
+          quickError.textContent = 'Current JSON is invalid. Fix it before deleting tasks.';
+          return;
+        }
+      }
+      if(!Array.isArray(currentData.tasks)){
+        currentData.tasks = [];
+      }
+      if(editIndex === null || !currentData.tasks[editIndex]) return;
+
+      const target = currentData.tasks[editIndex];
+      const targetLabel = (target.task || '').trim() || 'Untitled task';
+      const confirmed = confirm(`Delete "${targetLabel}"? This cannot be undone.`);
+      if(!confirmed) return;
+
+      currentData.tasks.splice(editIndex, 1);
+      sortTasksArray(currentData.tasks);
+
+      const pretty = JSON.stringify(currentData,null,2);
+      textarea.value = pretty;
+      localStorage.setItem(STORAGE_KEY, pretty);
+
+      closeQuickModal();
+      renderFromTextarea(true);
+    });
 
     // PERSON IMPORT/EXPORT MODAL
 
