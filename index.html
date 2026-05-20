@@ -419,7 +419,7 @@
           <input id="efStartDate" type="date" />
         </div>
         <div class="modal-row">
-          <label for="efEndDate">End date (include tasks ending strictly before)</label>
+          <label for="efEndDate">End date (exclude tasks ending on or after this date)</label>
           <input id="efEndDate" type="date" />
         </div>
         <div class="modal-row-inline">
@@ -926,13 +926,17 @@
           }
 
           const labelText = t.task + (t.hasDescription ? ' 📝' : '') + (t.floating ? ' (no date)' : '');
-          taskG.append('text')
+          const taskLabel = taskG.append('text')
             .attr('x',dStart+8)
             .attr('y',yTop+Math.round(barHeight*0.68))
             .attr('class','task-label')
             .attr('text-anchor','start')
+            .attr('aria-label', t.hasDescription ? (t.task + ', has description') : t.task)
             .text(labelText)
             .on('click', () => openQuickModalForEdit(t.id));
+          if(t.hasDescription){
+            taskLabel.append('title').text('Has description');
+          }
 
           if(showMilestones){
             const milestonesArr = Object.entries(t.milestones||{})
