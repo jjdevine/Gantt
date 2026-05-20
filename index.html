@@ -1098,7 +1098,8 @@
 
     function syncEndDurationInputs(changedField){
       const hasEnd = !!qmEnd.value;
-      const hasDuration = !!qmDurationWeeks.value.trim();
+      const durationValue = String(qmDurationWeeks.value || '').trim();
+      const hasDuration = !!durationValue;
       if(changedField === 'end' && hasEnd){
         qmDurationWeeks.value = '';
       }
@@ -1106,7 +1107,7 @@
         qmEnd.value = '';
       }
       qmDurationWeeks.disabled = !!qmEnd.value;
-      qmEnd.disabled = !!qmDurationWeeks.value.trim();
+      qmEnd.disabled = !!String(qmDurationWeeks.value || '').trim();
     }
 
     // Toggle start date enabled/disabled based on "unknown start" checkbox
