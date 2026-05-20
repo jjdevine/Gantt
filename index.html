@@ -348,12 +348,20 @@
           <input id="qmEnd" type="date" />
         </div>
         <div class="modal-row">
+          <label for="qmDurationWeeks">Duration (weeks, optional)</label>
+          <input id="qmDurationWeeks" type="number" min="0.1" step="0.1" />
+        </div>
+        <div class="modal-row">
           <label for="qmImpact">Capacity impact</label>
           <select id="qmImpact">
             <option value="high">High</option>
             <option value="medium" selected>Medium</option>
             <option value="low">Low</option>
           </select>
+        </div>
+        <div class="modal-row">
+          <label for="qmUtilisation">% Utilisation (optional)</label>
+          <input id="qmUtilisation" type="number" min="0" max="100" step="1" />
         </div>
         <div class="modal-row-inline">
           <input id="qmComplete" type="checkbox" />
@@ -476,6 +484,24 @@
       return 'medium';
     }
 
+    function parsePositiveNumber(val){
+      if(val === null || val === undefined) return null;
+      const s = String(val).trim();
+      if(!s) return null;
+      const n = Number(s);
+      if(!Number.isFinite(n) || n <= 0) return null;
+      return n;
+    }
+
+    function parseUtilisationPercent(val){
+      if(val === null || val === undefined) return null;
+      const s = String(val).trim();
+      if(!s) return null;
+      const n = Number(s);
+      if(!Number.isFinite(n)) return null;
+      return Math.max(0, Math.min(100, n));
+    }
+
     function isImpactVisible(impact){
       return capacityImpactState[impact] !== false;
     }
@@ -555,7 +581,9 @@
           "task": "sales report",
           "start": "2025-03-01",
           "end": "",
+          "durationWeeks": 8,
           "capacityImpact": "high",
+          "utilisationPercent": 60,
           "complete": false,
           "milestones": {
             "phase 1": "2025-05-01",
@@ -568,6 +596,7 @@
           "start": "2025-04-01",
           "end": "2025-06-01",
           "capacityImpact": "medium",
+          "utilisationPercent": 40,
           "complete": false,
           "milestones": {
             "contract signing": "2025-04-25"
@@ -579,6 +608,7 @@
           "start": "",
           "end": "",
           "capacityImpact": "medium",
+          "utilisationPercent": 20,
           "complete": false,
           "milestones": {}
         },
@@ -588,6 +618,7 @@
           "start": "2025-05-01",
           "end": "",
           "capacityImpact": "low",
+          "utilisationPercent": 25,
           "complete": false,
           "milestones": {
             "event occurs": "2025-06-24"
@@ -599,6 +630,7 @@
           "start": "2025-01-01",
           "end": "2025-02-01",
           "capacityImpact": "medium",
+          "utilisationPercent": 0,
           "complete": true,
           "milestones": {}
         }
@@ -695,14 +727,22 @@
 
       const tasks=tasksRaw.map((t,i)=>{
         const hasStart = !!(t.start && t.start.trim());
+        const startDate = hasStart ? parseDate(t.start) : null;
+        const durationWeeks = parsePositiveNumber(t.durationWeeks);
+        const explicitEnd = (t.end&&t.end.trim())?parseDate(t.end):null;
+        const endDate = (startDate && durationWeeks && !explicitEnd)
+          ? d3.utcDay.offset(startDate, Math.round(durationWeeks * 7))
+          : explicitEnd;
         return {
           id:i,
           person:t.person||'—',
           task:t.task||('task '+(i+1)),
-          start: hasStart ? parseDate(t.start) : null,
-          end:(t.end&&t.end.trim())?parseDate(t.end):null,
+          start: startDate,
+          end:endDate,
           capacityImpact: normaliseImpact(t.capacityImpact),
           complete: !!t.complete,
+          durationWeeks: durationWeeks,
+          utilisationPercent: parseUtilisationPercent(t.utilisationPercent),
           milestones:t.milestones||{},
           description: typeof t.description === 'string' ? t.description : '',
           hasDescription: !!(t.description && String(t.description).trim()),
@@ -1050,9 +1090,25 @@
     const qmDescription = document.getElementById('qmDescription');
     const qmStart = document.getElementById('qmStart');
     const qmEnd = document.getElementById('qmEnd');
+    const qmDurationWeeks = document.getElementById('qmDurationWeeks');
     const qmImpact = document.getElementById('qmImpact');
+    const qmUtilisation = document.getElementById('qmUtilisation');
     const qmComplete = document.getElementById('qmComplete');
     const qmNoStart = document.getElementById('qmNoStart');
+
+    function syncEndDurationInputs(changedField){
+      const hasEnd = !!qmEnd.value;
+      const durationValue = String(qmDurationWeeks.value || '').trim();
+      const hasDuration = !!durationValue;
+      if(changedField === 'end' && hasEnd){
+        qmDurationWeeks.value = '';
+      }
+      if(changedField === 'duration' && hasDuration){
+        qmEnd.value = '';
+      }
+      qmDurationWeeks.disabled = !!qmEnd.value;
+      qmEnd.disabled = !!String(qmDurationWeeks.value || '').trim();
+    }
 
     // Toggle start date enabled/disabled based on "unknown start" checkbox
     qmNoStart.addEventListener('change', () => {
@@ -1065,6 +1121,8 @@
         qmStart.required = true;
       }
     });
+    qmEnd.addEventListener('input', () => syncEndDurationInputs('end'));
+    qmDurationWeeks.addEventListener('input', () => syncEndDurationInputs('duration'));
 
     const milestoneList = document.getElementById('milestoneList');
     const addMilestoneBtn = document.getElementById('addMilestoneBtn');
@@ -1139,11 +1197,14 @@
       qmStart.required = true;
       qmStart.value = `${yyyy}-${mm}-${dd}`;
       qmEnd.value = '';
+      qmDurationWeeks.value = '';
       qmImpact.value = 'medium';
+      qmUtilisation.value = '';
       qmComplete.checked = false;
       qmPerson.value = '';
       qmTask.value = '';
       qmDescription.value = '';
+      syncEndDurationInputs();
 
       clearMilestoneRows();
       addMilestoneRow();
@@ -1172,8 +1233,11 @@
       qmStart.required = hasStart;
       qmStart.value = hasStart ? t.start.slice(0,10) : '';
       qmEnd.value = t.end ? t.end.slice(0,10) : '';
+      qmDurationWeeks.value = parsePositiveNumber(t.durationWeeks) || '';
       qmImpact.value = normaliseImpact(t.capacityImpact);
+      qmUtilisation.value = parseUtilisationPercent(t.utilisationPercent) ?? '';
       qmComplete.checked = !!t.complete;
+      syncEndDurationInputs();
 
       clearMilestoneRows();
       const ms = t.milestones || {};
@@ -1361,7 +1425,9 @@
           description: t.description || '',
           start: t.start || '',
           end: t.end || '',
+          durationWeeks: parsePositiveNumber(t.durationWeeks),
           capacityImpact: t.capacityImpact || 'medium',
+          utilisationPercent: parseUtilisationPercent(t.utilisationPercent),
           complete: !!t.complete,
           milestones: t.milestones || {}
         }));
@@ -1417,7 +1483,9 @@
       const noStart = qmNoStart.checked;
       const start = noStart ? '' : qmStart.value;
       const end = qmEnd.value;
+      const durationWeeks = parsePositiveNumber(qmDurationWeeks.value);
       const impact = qmImpact.value || 'medium';
+      const utilisationPercent = parseUtilisationPercent(qmUtilisation.value);
       const complete = qmComplete.checked;
 
       if(!person || !task){
@@ -1426,6 +1494,10 @@
       }
       if(!noStart && !start){
         quickError.textContent = 'Start date is required (or tick unknown start date).';
+        return;
+      }
+      if(end && durationWeeks){
+        quickError.textContent = 'Use either End date or Duration (weeks), not both.';
         return;
       }
 
@@ -1459,7 +1531,9 @@
         description: description,
         start: start || "",
         end: end || "",
+        durationWeeks: durationWeeks,
         capacityImpact: impact,
+        utilisationPercent: utilisationPercent,
         complete: complete,
         milestones: milestones
       };
@@ -1473,7 +1547,9 @@
         t.description = description;
         t.start = start || "";
         t.end = end || "";
+        t.durationWeeks = durationWeeks;
         t.capacityImpact = impact;
+        t.utilisationPercent = utilisationPercent;
         t.complete = complete;
         t.milestones = milestones;
       } else {
@@ -1533,7 +1609,15 @@
 
     function taskMatchesFilteredExport(task, minStartDate, maxEndDate, includeUndated){
       const start = task && typeof task.start === 'string' ? task.start.trim() : '';
-      const end = task && typeof task.end === 'string' ? task.end.trim() : '';
+      const rawEnd = task && typeof task.end === 'string' ? task.end.trim() : '';
+      const durationWeeks = parsePositiveNumber(task && task.durationWeeks);
+      let end = rawEnd;
+      if(!end && start && durationWeeks){
+        const computedStart = parseDate(start);
+        if(computedStart){
+          end = formatDate(d3.utcDay.offset(computedStart, Math.round(durationWeeks * 7)));
+        }
+      }
 
       if(minStartDate){
         if(!start){
