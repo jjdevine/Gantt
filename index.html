@@ -194,7 +194,7 @@
     display:flex;
     gap:8px;
   }
-  #quickError,#personError{
+  #quickError,#personError,#exportFilteredError{
     color:#f88;
     font-size:12px;
     min-height:16px;
@@ -246,6 +246,7 @@
     </div>
     <div class="top-buttons">
       <button id="downloadBtnTop">Download JSON</button>
+      <button id="exportFilteredBtnTop">Export filtered</button>
       <button id="personImportExportBtn">Person import/export</button>
       <button id="quickAddBtn">Quick add task</button>
     </div>
@@ -262,6 +263,7 @@
           <button id="saveBtn">Save & Render</button>
           <button id="resetBtn">Reset Example</button>
           <button id="downloadBtn">Download JSON</button>
+          <button id="exportFilteredBtn">Export filtered</button>
           <div id="msg" style="flex:1"></div>
         </div>
       </div>
@@ -328,6 +330,10 @@
         <div class="modal-row">
           <label for="qmTask">Task</label>
           <input id="qmTask" type="text" required />
+        </div>
+        <div class="modal-row">
+          <label for="qmDescription">Description (optional)</label>
+          <textarea id="qmDescription"></textarea>
         </div>
         <div class="modal-row-inline">
           <input id="qmNoStart" type="checkbox" />
@@ -398,6 +404,32 @@
             <button type="button" id="personImportBtn">Import &amp; replace</button>
           </div>
           <button type="button" id="personCancelBtn">Close</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Filtered export modal -->
+  <div id="exportFilteredModal" class="modal-backdrop modal-hidden" aria-modal="true" role="dialog">
+    <div class="modal-panel">
+      <h2>Export filtered JSON</h2>
+      <form id="exportFilteredForm">
+        <div class="modal-row">
+          <label for="efStartDate">Start date (include tasks starting on/after)</label>
+          <input id="efStartDate" type="date" />
+        </div>
+        <div class="modal-row">
+          <label for="efEndDate">End date (include tasks ending before)</label>
+          <input id="efEndDate" type="date" />
+        </div>
+        <div class="modal-row-inline">
+          <input id="efIncludeUndated" type="checkbox" />
+          <label for="efIncludeUndated">Include undated tasks</label>
+        </div>
+        <div id="exportFilteredError"></div>
+        <div class="modal-actions">
+          <button type="button" id="exportFilteredCancel">Cancel</button>
+          <button type="submit" id="exportFilteredSubmit">Download</button>
         </div>
       </form>
     </div>
@@ -603,17 +635,7 @@
       renderFromTextarea(true);
     };
     function downloadJSON(){
-      const blob=new Blob([textarea.value],{type:'application/json'});
-      const url=URL.createObjectURL(blob);
-      const now=new Date();
-      const ts=now.getFullYear()+'-'+
-        String(now.getMonth()+1).padStart(2,'0')+'-'+
-        String(now.getDate()).padStart(2,'0')+'-'+
-        String(now.getHours()).padStart(2,'0')+'-'+
-        String(now.getMinutes()).padStart(2,'0');
-      const a=document.createElement('a');
-      a.href=url; a.download='tasks-'+ts+'.json'; a.click();
-      URL.revokeObjectURL(url);
+      downloadJsonString(textarea.value,'tasks');
     }
     document.getElementById('downloadBtn').onclick=downloadJSON;
     document.getElementById('downloadBtnTop').onclick=downloadJSON;
@@ -682,6 +704,8 @@
           capacityImpact: normaliseImpact(t.capacityImpact),
           complete: !!t.complete,
           milestones:t.milestones||{},
+          description: typeof t.description === 'string' ? t.description : '',
+          hasDescription: !!(t.description && String(t.description).trim()),
           floating: !hasStart
         };
       });
@@ -901,12 +925,13 @@
               .text('⚠ overdue');
           }
 
+          const labelText = t.task + (t.hasDescription ? ' 📝' : '') + (t.floating ? ' (no date)' : '');
           taskG.append('text')
             .attr('x',dStart+8)
             .attr('y',yTop+Math.round(barHeight*0.68))
             .attr('class','task-label')
             .attr('text-anchor','start')
-            .text(t.floating ? t.task + ' (no date)' : t.task)
+            .text(labelText)
             .on('click', () => openQuickModalForEdit(t.id));
 
           if(showMilestones){
@@ -1018,6 +1043,7 @@
 
     const qmPerson = document.getElementById('qmPerson');
     const qmTask = document.getElementById('qmTask');
+    const qmDescription = document.getElementById('qmDescription');
     const qmStart = document.getElementById('qmStart');
     const qmEnd = document.getElementById('qmEnd');
     const qmImpact = document.getElementById('qmImpact');
@@ -1113,6 +1139,7 @@
       qmComplete.checked = false;
       qmPerson.value = '';
       qmTask.value = '';
+      qmDescription.value = '';
 
       clearMilestoneRows();
       addMilestoneRow();
@@ -1134,6 +1161,7 @@
 
       qmPerson.value = t.person || '';
       qmTask.value = t.task || '';
+      qmDescription.value = t.description || '';
       const hasStart = !!(t.start && t.start.trim());
       qmNoStart.checked = !hasStart;
       qmStart.disabled = !hasStart;
@@ -1326,6 +1354,7 @@
         .map(t => ({
           person: person,
           task: t.task || '',
+          description: t.description || '',
           start: t.start || '',
           end: t.end || '',
           capacityImpact: t.capacityImpact || 'medium',
@@ -1355,6 +1384,8 @@
           closeQuickModal();
         }else if(!personModal.classList.contains('modal-hidden')){
           closePersonModal();
+        }else if(!exportFilteredModal.classList.contains('modal-hidden')){
+          closeExportFilteredModal();
         }
       }
     });
@@ -1378,6 +1409,7 @@
 
       const person = qmPerson.value.trim();
       const task = qmTask.value.trim();
+      const description = qmDescription.value.trim();
       const noStart = qmNoStart.checked;
       const start = noStart ? '' : qmStart.value;
       const end = qmEnd.value;
@@ -1420,6 +1452,7 @@
       const newTask = {
         person: person,
         task: task,
+        description: description,
         start: start || "",
         end: end || "",
         capacityImpact: impact,
@@ -1433,6 +1466,7 @@
         const t = currentData.tasks[editIndex];
         t.person = person;
         t.task = task;
+        t.description = description;
         t.start = start || "";
         t.end = end || "";
         t.capacityImpact = impact;
@@ -1452,6 +1486,104 @@
       closeQuickModal();
       renderFromTextarea(true);
     });
+
+    // FILTERED EXPORT MODAL
+    const exportFilteredModal = document.getElementById('exportFilteredModal');
+    const exportFilteredForm = document.getElementById('exportFilteredForm');
+    const exportFilteredBtn = document.getElementById('exportFilteredBtn');
+    const exportFilteredBtnTop = document.getElementById('exportFilteredBtnTop');
+    const exportFilteredCancel = document.getElementById('exportFilteredCancel');
+    const exportFilteredError = document.getElementById('exportFilteredError');
+    const efStartDate = document.getElementById('efStartDate');
+    const efEndDate = document.getElementById('efEndDate');
+    const efIncludeUndated = document.getElementById('efIncludeUndated');
+
+    function openExportFilteredModal(){
+      exportFilteredError.textContent = '';
+      efStartDate.value = '';
+      efEndDate.value = '';
+      efIncludeUndated.checked = false;
+      exportFilteredModal.classList.remove('modal-hidden');
+      efStartDate.focus();
+    }
+
+    function closeExportFilteredModal(){
+      exportFilteredModal.classList.add('modal-hidden');
+    }
+
+    function downloadJsonString(jsonText, filePrefix){
+      const blob = new Blob([jsonText], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const now = new Date();
+      const ts = now.getFullYear()+'-'+
+        String(now.getMonth()+1).padStart(2,'0')+'-'+
+        String(now.getDate()).padStart(2,'0')+'-'+
+        String(now.getHours()).padStart(2,'0')+'-'+
+        String(now.getMinutes()).padStart(2,'0');
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filePrefix + '-' + ts + '.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function taskMatchesFilteredExport(task, minStartDate, maxEndDate, includeUndated){
+      const start = task && typeof task.start === 'string' ? task.start.trim() : '';
+      const end = task && typeof task.end === 'string' ? task.end.trim() : '';
+
+      if(minStartDate){
+        if(!start){
+          if(!includeUndated) return false;
+        }else if(start < minStartDate){
+          return false;
+        }
+      }
+
+      if(maxEndDate){
+        if(!end){
+          if(!includeUndated) return false;
+        }else if(end >= maxEndDate){
+          return false;
+        }
+      }
+
+      return true;
+    }
+
+    if(exportFilteredBtn) exportFilteredBtn.addEventListener('click', openExportFilteredModal);
+    if(exportFilteredBtnTop) exportFilteredBtnTop.addEventListener('click', openExportFilteredModal);
+    exportFilteredCancel.addEventListener('click', closeExportFilteredModal);
+    exportFilteredModal.addEventListener('click', (e)=>{
+      if(e.target === exportFilteredModal){
+        closeExportFilteredModal();
+      }
+    });
+
+    exportFilteredForm.addEventListener('submit', (e)=>{
+      e.preventDefault();
+      exportFilteredError.textContent = '';
+
+      let data;
+      try{
+        data = textarea.value ? JSON.parse(textarea.value) : {tasks:[]};
+      }catch(err){
+        exportFilteredError.textContent = 'Current JSON is invalid.';
+        return;
+      }
+      if(!data.tasks || !Array.isArray(data.tasks)){
+        exportFilteredError.textContent = 'Missing tasks array.';
+        return;
+      }
+
+      const minStartDate = efStartDate.value;
+      const maxEndDate = efEndDate.value;
+      const includeUndated = efIncludeUndated.checked;
+      const filteredTasks = data.tasks.filter(t => taskMatchesFilteredExport(t, minStartDate, maxEndDate, includeUndated));
+      const exportData = Object.assign({}, data, { tasks: filteredTasks });
+      downloadJsonString(JSON.stringify(exportData, null, 2), 'tasks-filtered');
+      closeExportFilteredModal();
+    });
+
   })();
   </script>
 </body>
