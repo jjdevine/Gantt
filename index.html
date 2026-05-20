@@ -415,11 +415,11 @@
       <h2>Export filtered JSON</h2>
       <form id="exportFilteredForm">
         <div class="modal-row">
-          <label for="efStartDate">Start date (include tasks starting on/after)</label>
+          <label for="efStartDate">Start date (include tasks starting on or after this date)</label>
           <input id="efStartDate" type="date" />
         </div>
         <div class="modal-row">
-          <label for="efEndDate">End date (exclude tasks ending on or after this date)</label>
+          <label for="efEndDate">End date (tasks must end before this date)</label>
           <input id="efEndDate" type="date" />
         </div>
         <div class="modal-row-inline">
@@ -925,7 +925,7 @@
               .text('⚠ overdue');
           }
 
-          const labelText = t.task + (t.hasDescription ? ' 📝' : '') + (t.floating ? ' (no date)' : '');
+          const labelText = `${t.task}${t.hasDescription ? ' 📝' : ''}${t.floating ? ' (no date)' : ''}`;
           const taskLabel = taskG.append('text')
             .attr('x',dStart+8)
             .attr('y',yTop+Math.round(barHeight*0.68))
