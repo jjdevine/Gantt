@@ -171,6 +171,36 @@
     font-weight:600;
     cursor:pointer;
   }
+  #quickModal .modal-panel{
+    width:min(900px,94vw);
+    max-width:900px;
+    max-height:90vh;
+    overflow-y:auto;
+  }
+  #quickForm{
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    column-gap:12px;
+    row-gap:8px;
+  }
+  #quickForm .modal-row,
+  #quickForm .modal-row-inline{
+    margin-bottom:0;
+  }
+  #quickForm .modal-row-full,
+  #quickForm #quickError,
+  #quickForm .modal-actions{
+    grid-column:1 / -1;
+  }
+  #quickForm #qmDescription{
+    min-height:90px;
+    max-height:220px;
+  }
+  @media (max-width:700px){
+    #quickForm{
+      grid-template-columns:1fr;
+    }
+  }
   .modal-actions{
     display:flex;
     justify-content:flex-end;
@@ -331,7 +361,7 @@
           <label for="qmTask">Task</label>
           <input id="qmTask" type="text" required />
         </div>
-        <div class="modal-row">
+        <div class="modal-row modal-row-full">
           <label for="qmDescription">Description (optional)</label>
           <textarea id="qmDescription"></textarea>
         </div>
@@ -368,7 +398,7 @@
           <label for="qmComplete">Complete</label>
         </div>
 
-        <div class="modal-row">
+        <div class="modal-row modal-row-full">
           <label>Milestones</label>
           <div id="milestoneList"></div>
           <button type="button" id="addMilestoneBtn">Add milestone</button>
