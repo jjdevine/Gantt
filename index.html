@@ -466,7 +466,7 @@
         </div>
         <div class="modal-row-inline">
           <input id="efOnlyActiveUpcoming" type="checkbox" />
-          <label for="efOnlyActiveUpcoming">Only active or not-yet-started tasks</label>
+          <label for="efOnlyActiveUpcoming">Only active or upcoming tasks (exclude completed / ended)</label>
         </div>
         <div id="exportFilteredError"></div>
         <div class="modal-actions">
@@ -1643,7 +1643,7 @@
       URL.revokeObjectURL(url);
     }
 
-    function taskMatchesFilteredExport(task, minStartDate, maxEndDate, includeUndated, onlyActiveUpcoming){
+    function taskMatchesFilteredExport(task, minStartDate, maxEndDate, includeUndated, onlyActiveUpcoming, todayDate){
       const start = task && typeof task.start === 'string' ? task.start.trim() : '';
       const rawEnd = task && typeof task.end === 'string' ? task.end.trim() : '';
       const durationWeeks = parsePositiveNumber(task && task.durationWeeks);
@@ -1672,9 +1672,8 @@
       }
 
       if(onlyActiveUpcoming){
-        const today = formatDate(todayUTC());
         if(task && task.complete) return false;
-        if(end && end < today) return false;
+        if(end && end < todayDate) return false;
       }
 
       return true;
@@ -1709,7 +1708,8 @@
       const maxEndDate = efEndDate.value;
       const includeUndated = efIncludeUndated.checked;
       const onlyActiveUpcoming = efOnlyActiveUpcoming.checked;
-      const filteredTasks = data.tasks.filter(t => taskMatchesFilteredExport(t, minStartDate, maxEndDate, includeUndated, onlyActiveUpcoming));
+      const todayDate = onlyActiveUpcoming ? formatDate(todayUTC()) : '';
+      const filteredTasks = data.tasks.filter(t => taskMatchesFilteredExport(t, minStartDate, maxEndDate, includeUndated, onlyActiveUpcoming, todayDate));
       const exportData = Object.assign({}, data, { tasks: filteredTasks });
       downloadJsonString(JSON.stringify(exportData, null, 2), 'tasks-filtered');
       closeExportFilteredModal();
