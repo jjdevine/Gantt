@@ -464,6 +464,10 @@
           <input id="efIncludeUndated" type="checkbox" />
           <label for="efIncludeUndated">Include undated tasks</label>
         </div>
+        <div class="modal-row-inline">
+          <input id="efOnlyActiveUpcoming" type="checkbox" />
+          <label for="efOnlyActiveUpcoming">Only active or upcoming tasks (exclude completed / end date in past)</label>
+        </div>
         <div id="exportFilteredError"></div>
         <div class="modal-actions">
           <button type="button" id="exportFilteredCancel">Cancel</button>
@@ -1607,12 +1611,14 @@
     const efStartDate = document.getElementById('efStartDate');
     const efEndDate = document.getElementById('efEndDate');
     const efIncludeUndated = document.getElementById('efIncludeUndated');
+    const efOnlyActiveUpcoming = document.getElementById('efOnlyActiveUpcoming');
 
     function openExportFilteredModal(){
       exportFilteredError.textContent = '';
       efStartDate.value = '';
       efEndDate.value = '';
       efIncludeUndated.checked = false;
+      efOnlyActiveUpcoming.checked = false;
       exportFilteredModal.classList.remove('modal-hidden');
       efStartDate.focus();
     }
@@ -1637,7 +1643,7 @@
       URL.revokeObjectURL(url);
     }
 
-    function taskMatchesFilteredExport(task, minStartDate, maxEndDate, includeUndated){
+    function taskMatchesFilteredExport(task, minStartDate, maxEndDate, includeUndated, onlyActiveUpcoming, todayDate){
       const start = task && typeof task.start === 'string' ? task.start.trim() : '';
       const rawEnd = task && typeof task.end === 'string' ? task.end.trim() : '';
       const durationWeeks = parsePositiveNumber(task && task.durationWeeks);
@@ -1663,6 +1669,11 @@
         }else if(end >= maxEndDate){
           return false;
         }
+      }
+
+      if(onlyActiveUpcoming){
+        if(task && task.complete) return false;
+        if(end && end < todayDate) return false;
       }
 
       return true;
@@ -1696,7 +1707,9 @@
       const minStartDate = efStartDate.value;
       const maxEndDate = efEndDate.value;
       const includeUndated = efIncludeUndated.checked;
-      const filteredTasks = data.tasks.filter(t => taskMatchesFilteredExport(t, minStartDate, maxEndDate, includeUndated));
+      const onlyActiveUpcoming = efOnlyActiveUpcoming.checked;
+      const todayDate = onlyActiveUpcoming ? formatDate(todayUTC()) : '';
+      const filteredTasks = data.tasks.filter(t => taskMatchesFilteredExport(t, minStartDate, maxEndDate, includeUndated, onlyActiveUpcoming, todayDate));
       const exportData = Object.assign({}, data, { tasks: filteredTasks });
       downloadJsonString(JSON.stringify(exportData, null, 2), 'tasks-filtered');
       closeExportFilteredModal();
