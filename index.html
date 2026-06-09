@@ -361,6 +361,14 @@
           <label for="qmTask">Task</label>
           <input id="qmTask" type="text" required />
         </div>
+        <div class="modal-row">
+          <label for="qmWorkItemType">Work Item Type</label>
+          <select id="qmWorkItemType">
+            <option value="Feature">Feature</option>
+            <option value="Improvement">Improvement</option>
+            <option value="Other" selected>Other</option>
+          </select>
+        </div>
         <div class="modal-row modal-row-full">
           <label for="qmDescription">Description (optional)</label>
           <textarea id="qmDescription"></textarea>
@@ -518,6 +526,15 @@
       return 'medium';
     }
 
+    function normaliseWorkItemType(val){
+      if(!val) return 'Other';
+      const v = String(val).trim().toLowerCase();
+      if(v === 'feature') return 'Feature';
+      if(v === 'improvement') return 'Improvement';
+      if(v === 'other') return 'Other';
+      return 'Other';
+    }
+
     function parsePositiveNumber(val){
       if(val === null || val === undefined) return null;
       const s = String(val).trim();
@@ -613,6 +630,7 @@
         {
           "person": "bob",
           "task": "sales report",
+          "workItemType": "Feature",
           "start": "2025-03-01",
           "end": "",
           "durationWeeks": 8,
@@ -627,6 +645,7 @@
         {
           "person": "bob",
           "task": "customer demo",
+          "workItemType": "Improvement",
           "start": "2025-04-01",
           "end": "2025-06-01",
           "capacityImpact": "medium",
@@ -639,6 +658,7 @@
         {
           "person": "bob",
           "task": "future planning",
+          "workItemType": "Other",
           "start": "",
           "end": "",
           "capacityImpact": "medium",
@@ -649,6 +669,7 @@
         {
           "person": "fred",
           "task": "book event",
+          "workItemType": "Feature",
           "start": "2025-05-01",
           "end": "",
           "capacityImpact": "low",
@@ -661,6 +682,7 @@
         {
           "person": "fred",
           "task": "old finished task",
+          "workItemType": "Improvement",
           "start": "2025-01-01",
           "end": "2025-02-01",
           "capacityImpact": "medium",
@@ -1121,6 +1143,7 @@
 
     const qmPerson = document.getElementById('qmPerson');
     const qmTask = document.getElementById('qmTask');
+    const qmWorkItemType = document.getElementById('qmWorkItemType');
     const qmDescription = document.getElementById('qmDescription');
     const qmStart = document.getElementById('qmStart');
     const qmEnd = document.getElementById('qmEnd');
@@ -1237,6 +1260,7 @@
       qmComplete.checked = false;
       qmPerson.value = '';
       qmTask.value = '';
+      qmWorkItemType.value = 'Other';
       qmDescription.value = '';
       syncEndDurationInputs();
 
@@ -1260,6 +1284,7 @@
 
       qmPerson.value = t.person || '';
       qmTask.value = t.task || '';
+      qmWorkItemType.value = normaliseWorkItemType(t.workItemType);
       qmDescription.value = t.description || '';
       const hasStart = !!(t.start && t.start.trim());
       qmNoStart.checked = !hasStart;
@@ -1456,6 +1481,7 @@
         .map(t => ({
           person: person,
           task: t.task || '',
+          workItemType: normaliseWorkItemType(t.workItemType),
           description: t.description || '',
           start: t.start || '',
           end: t.end || '',
@@ -1513,6 +1539,7 @@
 
       const person = qmPerson.value.trim();
       const task = qmTask.value.trim();
+      const workItemType = normaliseWorkItemType(qmWorkItemType.value);
       const description = qmDescription.value.trim();
       const noStart = qmNoStart.checked;
       const start = noStart ? '' : qmStart.value;
@@ -1562,6 +1589,7 @@
       const newTask = {
         person: person,
         task: task,
+        workItemType: workItemType,
         description: description,
         start: start || "",
         end: end || "",
@@ -1578,6 +1606,7 @@
         const t = currentData.tasks[editIndex];
         t.person = person;
         t.task = task;
+        t.workItemType = workItemType;
         t.description = description;
         t.start = start || "";
         t.end = end || "";
